@@ -6,6 +6,9 @@
 #include "disk.h"
 #include "fs.h"
 
+//(hex)    (dec)
+//0xFFFF = 65535
+
 //global linked list of blocks
 typedef struct {
     char *signature;
@@ -16,7 +19,9 @@ typedef struct {
     uint8_t fatBlockCount;
 } superblock;
 
-//TODO make a struct for FAT structure
+typedef struct {
+    uint16_t entries[2048]; //TODO in the future might want to not hardcode this upper limit???
+} fat;
 
 typedef struct {
     char *fileName;
@@ -34,7 +39,7 @@ superblock* init_superblock(){
     int readSuccess = block_read(0, block); //take block at index 0 and copy into malloc'd block
 
     if(readSuccess == -1){
-        printf("read disk failed.\n");
+        printf("read disk failed (0).\n");
         return NULL;
     }
 
@@ -98,70 +103,33 @@ superblock* init_superblock(){
     return sBlock;
 }
 
-void init_fat(void* block){
+fat* init_fat(int index){
 
-    // //superblock* sBlock = (superblock*)malloc(sizeof(superblock));
-    //
-    // //INITIAL TESTING FOR GETTING ALL INFO IN SUPERBLOCK
-    //
-    // uint16_t fatArray[2048] = { 0 };
-    //
-    // //use this variable to skip over previously read bytes
-    // char* blockOffset = (char*)block;
-    //
-    // //TODO 2048 is upper limit for one block
-    // //TODO COME BACK TO THIS LATER
-    //
-    // void * signature = malloc(8);
-    // memcpy(signature, (void *)blockOffset, 8);
-    //
-    // sBlock->signature = (char *)signature;
-    // //printf("Signature: %s\n", sBlock->signature);
-    //
-    // //======================================================//
-    //
-    // void * numBlocks = malloc(2);
-    // blockOffset += 8;
-    // memcpy(numBlocks, (void *)blockOffset , 2);
-    //
-    // sBlock->numBlocks = *((uint16_t*)numBlocks);
-    // //printf("Number of Blocks: %d\n", sBlock->numBlocks);
-    //
-    // //======================================================//
-    //
-    // void * rootIndex = malloc(2);
-    // blockOffset += 2;
-    // memcpy(rootIndex, (void *)blockOffset , 2);
-    //
-    // sBlock->rootIndex = *((uint16_t*)rootIndex);
-    // //printf("Root Directory Block Index: %d\n", sBlock->rootIndex);
-    //
-    // //======================================================//
-    //
-    // void * dataStartIndex = malloc(2);
-    // blockOffset += 2;
-    // memcpy(dataStartIndex, (void *)blockOffset , 2);
-    //
-    // sBlock->dataStartIndex = *((uint16_t*)dataStartIndex);
-    // //printf("Data Block Start Index: %d\n", sBlock->dataStartIndex);
-    //
-    // //======================================================//
-    //
-    // void * dataBlockCount = malloc(2);
-    // blockOffset += 2;
-    // memcpy(dataBlockCount, (void *)blockOffset , 2);
-    //
-    // sBlock->dataBlockCount = *((uint16_t*)dataBlockCount);
-    // //printf("Data Block Count: %d\n", sBlock->dataBlockCount);
-    //
-    // //======================================================//
-    //
-    // void * fatBlockCount = malloc(1);
-    // blockOffset += 2;
-    // memcpy(fatBlockCount, (void *)blockOffset , 1);
-    //
-    // sBlock->fatBlockCount = *((uint16_t*)fatBlockCount);
-    // //printf("Fat Block Count: %d\n", sBlock->fatBlockCount);
+    fat* fBlock = (fat*)malloc(sizeof(fat));
+
+    void* block = malloc(BLOCK_SIZE);
+    int readSuccess = block_read(index, block); //take block at index 0 and copy into malloc'd block
+
+    if(readSuccess == -1){
+        printf("read disk failed (1).\n");
+        return NULL;
+    }
+
+    char* blockOffset = (char*)block;
+
+    for(int i=0; i<2048; i++){
+        uint16_t* entry = (uint16_t*)malloc(2);
+
+        memcpy(entry, (void *)blockOffset, 2);
+
+        fBlock->entries[i] = *entry;
+
+        //printf("Entry - (index, entry) =  (%d, %u)\n", i, *entry);
+
+        blockOffset += 2;
+    }
+
+    return fBlock;
 }
 
 void init_rootDir(uint16_t rootIndex){
@@ -170,7 +138,7 @@ void init_rootDir(uint16_t rootIndex){
     int readSuccess = block_read(rootIndex, block); //take block at index 0 and copy into malloc'd block
 
     if(readSuccess == -1){
-        printf("read disk failed.\n");
+        printf("read disk failed (rootIndex).\n");
         return; //TODO return null in the future
     }
 
@@ -233,7 +201,22 @@ int fs_mount(const char *diskname)
         return -1;
     }
 
-    //init_fat(block); //TODO assign this to a variable after everything is read
+    int currentIndex = 1;
+    fat* fBlock;
+    while(sBlock->rootIndex - currentIndex >= 1){
+
+        //TODO in the future we will be pushing these blocks onto the global linked list...
+        fBlock = init_fat(currentIndex++);
+
+        if(fBlock == NULL){
+            printf("read fat failed\n");
+            return -1;
+        }
+
+        printf("fat block created\n");
+    }
+
+
 
     init_rootDir(sBlock->rootIndex);
 
