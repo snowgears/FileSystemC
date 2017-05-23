@@ -53,7 +53,7 @@ superblock* init_superblock(){
     memcpy(signature, (void *)blockOffset, 8);
 
     sBlock->signature = (char *)signature;
-    //printf("Signature: %s\n", sBlock->signature);
+    printf("Signature: %s\n", sBlock->signature);
 
     //======================================================//
 
@@ -201,6 +201,16 @@ int fs_mount(const char *diskname)
         return -1;
     }
 
+    if(strcmp(sBlock->signature, "ECS150FS") != 0){
+        printf("sigantures do not match\n");
+        return -1;
+    }
+
+    if(sBlock->numBlocks != block_disk_count()){
+        printf("number of blocks do not match\n");
+        return -1;
+    }
+
     int currentIndex = 1;
     fat* fBlock;
     while(sBlock->rootIndex - currentIndex >= 1){
@@ -216,9 +226,8 @@ int fs_mount(const char *diskname)
         printf("fat block created\n");
     }
 
-
-
-    init_rootDir(sBlock->rootIndex);
+    //TODO uncomment this later
+    //init_rootDir(sBlock->rootIndex);
 
 	return 0;
 }
