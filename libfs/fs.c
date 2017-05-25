@@ -3,11 +3,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/mman.h>
 #include "disk.h"
 #include "fs.h"
+#include "linkedlist.h"
 
 //(hex)    (dec)
 //0xFFFF = 65535
+#define BLOCK_SUPER 11
+#define BLOCK_FAT 12
+#define BLOCK_ROOT 13
+#define BLOCK_DATA 14
+
+list_t blockList;
 
 //global linked list of blocks
 typedef struct {
@@ -33,6 +41,11 @@ typedef struct {
     rootEntry* entries[128];
 } rootDirectory;
 
+//TODO make linked list
+superblock* sBlock;
+fat* fBlock;
+rootDirectory* rBlock;
+
 superblock* init_superblock(){
 
     void* block = malloc(BLOCK_SIZE);
@@ -45,6 +58,8 @@ superblock* init_superblock(){
 
     superblock* sBlock = (superblock*)malloc(sizeof(superblock));
 
+//	printf("Superblock:\n");
+
     //use this variable to skip over previously read bytes
     char* blockOffset = (char*)block;
 
@@ -53,7 +68,7 @@ superblock* init_superblock(){
     memcpy(signature, (void *)blockOffset, 8);
 
     sBlock->signature = (char *)signature;
-    printf("Signature: %s\n", sBlock->signature);
+//    printf("Signature: %s\n", sBlock->signature);
 
     //======================================================//
 
@@ -62,7 +77,7 @@ superblock* init_superblock(){
     memcpy(numBlocks, (void *)blockOffset , 2);
 
     sBlock->numBlocks = *((uint16_t*)numBlocks);
-    //printf("Number of Blocks: %d\n", sBlock->numBlocks);
+//    printf("Number of Blocks: %d\n", sBlock->numBlocks);
 
     //======================================================//
 
@@ -71,7 +86,7 @@ superblock* init_superblock(){
     memcpy(rootIndex, (void *)blockOffset , 2);
 
     sBlock->rootIndex = *((uint16_t*)rootIndex);
-    //printf("Root Directory Block Index: %d\n", sBlock->rootIndex);
+//    printf("Root Directory Block Index: %d\n", sBlock->rootIndex);
 
     //======================================================//
 
@@ -80,7 +95,7 @@ superblock* init_superblock(){
     memcpy(dataStartIndex, (void *)blockOffset , 2);
 
     sBlock->dataStartIndex = *((uint16_t*)dataStartIndex);
-    //printf("Data Block Start Index: %d\n", sBlock->dataStartIndex);
+//    printf("Data Block Start Index: %d\n", sBlock->dataStartIndex);
 
     //======================================================//
 
@@ -89,7 +104,7 @@ superblock* init_superblock(){
     memcpy(dataBlockCount, (void *)blockOffset , 2);
 
     sBlock->dataBlockCount = *((uint16_t*)dataBlockCount);
-    //printf("Data Block Count: %d\n", sBlock->dataBlockCount);
+//    printf("Data Block Count: %d\n", sBlock->dataBlockCount);
 
     //======================================================//
 
@@ -98,7 +113,7 @@ superblock* init_superblock(){
     memcpy(fatBlockCount, (void *)blockOffset , 1);
 
     sBlock->fatBlockCount = *((uint16_t*)fatBlockCount);
-    //printf("Fat Block Count: %d\n", sBlock->fatBlockCount);
+//    printf("Fat Block Count: %d\n\n", sBlock->fatBlockCount);
 
     return sBlock;
 }
@@ -124,25 +139,28 @@ fat* init_fat(int index){
 
         fBlock->entries[i] = *entry;
 
-        //printf("Entry - (index, entry) =  (%d, %u)\n", i, *entry);
+//        printf("Entry - (index, entry) =  (%d, %u)\n", i, *entry);
 
         blockOffset += 2;
     }
+//	printf("\n");
 
     return fBlock;
 }
 
-void init_rootDir(uint16_t rootIndex){
+rootDirectory* init_rootDir(uint16_t rootIndex){
 
     void* block = malloc(BLOCK_SIZE);
     int readSuccess = block_read(rootIndex, block); //take block at index 0 and copy into malloc'd block
 
     if(readSuccess == -1){
         printf("read disk failed (rootIndex).\n");
-        return; //TODO return null in the future
+        return NULL; //TODO return null in the future
     }
 
     rootDirectory* rootDir = (rootDirectory*)malloc(sizeof(rootDirectory));
+
+//	printf("Root Directory\n");
 
     //use this variable to skip over previously read bytes
     char* blockOffset = (char*)block;
@@ -154,7 +172,7 @@ void init_rootDir(uint16_t rootIndex){
         memcpy(fileName, (void *)blockOffset, 16);
 
         entry->fileName = (char *)fileName;
-        printf("Entry - File Name: %s\n", entry->fileName);
+//        printf("Entry - File Name: %s\n", entry->fileName);
 
         //======================================================//
 
@@ -163,7 +181,7 @@ void init_rootDir(uint16_t rootIndex){
         memcpy(fileSize, (void *)blockOffset , 4);
 
         entry->fileSize = *((uint32_t*)fileSize);
-        printf("Entry - File Size: %d\n", entry->fileSize);
+//        printf("Entry - File Size: %d\n", entry->fileSize);
 
         //======================================================//
 
@@ -172,19 +190,21 @@ void init_rootDir(uint16_t rootIndex){
         memcpy(dataStartIndex, (void *)blockOffset , 2);
 
         entry->dataStartIndex = *((uint16_t*)dataStartIndex);
-        printf("Entry - Data Start Index: %d\n", entry->dataStartIndex);
+//        printf("Entry - Data Start Index: %d\n", entry->dataStartIndex);
 
         //move data offset by 10 to account for the unused/padding area of the entry
         blockOffset += 12;
 
         rootDir->entries[i] = entry;
     }
-
+//	printf("\n");
+	return rootDir;
 }
 
 int fs_mount(const char *diskname)
 {
     //TODO will need to initialize a new block and add to the global linked list of blocks
+    //
 
     int success = block_disk_open(diskname);
 
@@ -193,9 +213,11 @@ int fs_mount(const char *diskname)
         return -1;
     }
 
+    blockList = list_create();
 
-    superblock* sBlock = init_superblock();
 
+//    superblock* sBlock = init_superblock();
+	sBlock = init_superblock();
     if(sBlock == NULL){
         printf("read superblock failed\n");
         return -1;
@@ -211,10 +233,13 @@ int fs_mount(const char *diskname)
         return -1;
     }
 
-    int currentIndex = 1;
-    fat* fBlock;
-    while(sBlock->rootIndex - currentIndex >= 1){
+    list_add(blockList, (void*)sBlock, BLOCK_SUPER);
 
+    int currentIndex = 1;
+//    fat* fBlock;
+	fBlock = malloc(sBlock->fatBlockCount * sizeof(fat));
+    while(sBlock->rootIndex - currentIndex >= 1){
+//	printf("FAT #%d\n", currentIndex);
         //TODO in the future we will be pushing these blocks onto the global linked list...
         fBlock = init_fat(currentIndex++);
 
@@ -223,13 +248,21 @@ int fs_mount(const char *diskname)
             return -1;
         }
 
-        printf("fat block created\n");
+	list_add(blockList, (void*)fBlock, BLOCK_FAT);
+
+        //printf("fat block created\n");
     }
 
     //TODO uncomment this later
-    //init_rootDir(sBlock->rootIndex);
+    rBlock = init_rootDir(sBlock->rootIndex);
+    list_add(blockList, (void*)rBlock, BLOCK_ROOT);
 
-	return 0;
+    while(list_length(blockList) < sBlock->numBlocks){
+        void * page = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+        list_add(blockList, (void*)page, BLOCK_DATA);
+    }
+
+    return 0;
 }
 
 int fs_umount(void)
@@ -240,8 +273,40 @@ int fs_umount(void)
 	return 0;
 }
 
+int fat_count(void)
+{
+	//TODO account for multiple FAT blocks
+	int count = 0;
+	for(int i = 0; i < 2048; i++){
+		if (fBlock->entries[i] != 0){
+			count++;
+		}
+	}
+	return count;
+}
+
+int rdir_count(void)
+{
+	int count = 0;
+	for(int i = 0; i < 128; i++){
+		if(rBlock->entries[i]->fileSize == 0){
+			count++;
+		}
+	}
+	return count;
+}
+
 int fs_info(void)
 {
+	printf("FS Info:\n");
+	printf("total_blk_count=%d\n", sBlock->numBlocks);
+	printf("fat_blk_count=%d\n", sBlock->fatBlockCount);
+	printf("rdir_blk=%d\n", sBlock->rootIndex);
+	printf("data_blk=%d\n", sBlock->dataStartIndex);
+	printf("data_blk_count=%d\n", sBlock->dataBlockCount);
+	printf("fat_free_ratio=%d/%d\n", (sBlock->dataBlockCount - fat_count())
+					, sBlock->dataBlockCount);
+	printf("rdir_free_ratio=%d/%d\n", rdir_count(), 128);
 	return 0;
 }
 
