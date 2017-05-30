@@ -41,11 +41,6 @@ typedef struct {
     rootEntry* entries[128];
 } rootDirectory;
 
-//TODO make linked list
-superblock* sBlock;
-fat* fBlock;
-rootDirectory* rBlock;
-
 superblock* init_superblock(){
 
     void* block = malloc(BLOCK_SIZE);
@@ -217,7 +212,7 @@ int fs_mount(const char *diskname)
 
 
 //    superblock* sBlock = init_superblock();
-	sBlock = init_superblock();
+	superblock* sBlock = init_superblock();
     if(sBlock == NULL){
         printf("read superblock failed\n");
         return -1;
@@ -237,10 +232,9 @@ int fs_mount(const char *diskname)
 
     int currentIndex = 1;
 //    fat* fBlock;
-	fBlock = malloc(sBlock->fatBlockCount * sizeof(fat));
+	fat* fBlock = malloc(sBlock->fatBlockCount * sizeof(fat));
     while(sBlock->rootIndex - currentIndex >= 1){
-//	printf("FAT #%d\n", currentIndex);
-        //TODO in the future we will be pushing these blocks onto the global linked list...
+        //	printf("FAT #%d\n", currentIndex);
         fBlock = init_fat(currentIndex++);
 
         if(fBlock == NULL){
@@ -248,13 +242,12 @@ int fs_mount(const char *diskname)
             return -1;
         }
 
-	list_add(blockList, (void*)fBlock, BLOCK_FAT);
+	    list_add(blockList, (void*)fBlock, BLOCK_FAT);
 
         //printf("fat block created\n");
     }
 
-    //TODO uncomment this later
-    rBlock = init_rootDir(sBlock->rootIndex);
+    rootDirectory* rBlock = init_rootDir(sBlock->rootIndex);
     list_add(blockList, (void*)rBlock, BLOCK_ROOT);
 
     while(list_length(blockList) < sBlock->numBlocks){
@@ -275,18 +268,34 @@ int fs_umount(void)
 
 int fat_count(void)
 {
-	//TODO account for multiple FAT blocks
 	int count = 0;
-	for(int i = 0; i < 2048; i++){
-		if (fBlock->entries[i] != 0){
-			count++;
-		}
-	}
+
+    //account for multiple FAT blocks
+    for(int i = 0; i<list_length(blockList); i++){
+
+        nodePtr nd = list_get(blockList, i);
+        //if the block is FAT, count the number of entries within it
+        if(getType(nd) == BLOCK_FAT){
+            fat* fBlock = (fat*) getData(nd);
+
+        	for(int j = 0; j < 2048; j++){
+        		if (fBlock->entries[j] != 0){
+        			count++;
+        		}
+        	}
+        }
+    }
 	return count;
 }
 
 int rdir_count(void)
 {
+    nodePtr nd = list_get(blockList, 0);
+    superblock* sBlock = (superblock*)getData(nd);
+
+    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
+    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+
 	int count = 0;
 	for(int i = 0; i < 128; i++){
 		if(rBlock->entries[i]->fileSize == 0){
@@ -298,6 +307,9 @@ int rdir_count(void)
 
 int fs_info(void)
 {
+    nodePtr nd = list_get(blockList, 0);
+    superblock* sBlock = (superblock*)getData(nd);
+    
 	printf("FS Info:\n");
 	printf("total_blk_count=%d\n", sBlock->numBlocks);
 	printf("fat_blk_count=%d\n", sBlock->fatBlockCount);
