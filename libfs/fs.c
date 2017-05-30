@@ -244,7 +244,7 @@ int fs_umount(void)
     if(listLen == -1){
         return -1;
     }
-    
+
     for(int i = 0; i<listLen; i++){
         nodePtr nd = list_get(blockList, i);
 
@@ -362,7 +362,7 @@ int fs_create(const char *filename)
                             //TODO may need to find the size of fileName instead of using upper limit of 16 bytes
                             memcpy(rBlock->entries[k].fileName, (void *)filename , 16);
                             rBlock->entries[k].fileSize = 0;
-                            rBlock->entries[k].dataStartIndex = FAT_EOC;
+                            rBlock->entries[k].dataStartIndex = j;
                             return 0;
                         }
                     }
@@ -376,7 +376,26 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
-	return 0;
+    nodePtr nd = list_get(blockList, 0);
+    superblock* sBlock = (superblock*)getData(nd);
+
+    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
+    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+
+	for(int i = 0; i < 128; i++){
+		if(strcmp(rBlock->entries[i].fileName, filename) == 0){
+            nodePtr fatNd = list_get(blockList, 1); //TODO in the future we will have to account for more than 1 fat block
+
+            fat* fBlock = (fat*) getData(fatNd);
+            fBlock->entries[rBlock->entries[i].dataStartIndex] = 0;
+
+            rBlock->entries[i].fileName[0] = '\0';
+            rBlock->entries[i].fileSize = 0;
+            rBlock->entries[i].dataStartIndex = 0;
+            return 0;
+		}
+	}
+	return -1;
 }
 
 int fs_ls(void)
