@@ -43,6 +43,12 @@ typedef struct {
     rootEntry entries[128];
 } __attribute__((packed)) rootDirectory;
 
+typedef struct {
+    char fileName[16];
+    int fileDescriptors[32];
+    int offsets[32];
+} fdOp;
+
 superblock* init_superblock(){
 
     void* block = malloc(BLOCK_SIZE);
