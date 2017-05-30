@@ -406,10 +406,10 @@ int fs_ls(void)
 	nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
 	rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
 
-	printf("FS Ls\n");
+	printf("FS Ls:\n");
 	for(int i = 0; i < 128; i++){
 		if (rBlock->entries[i].fileName[0] != '\0'){
-			printf("file: %s, size:, %d, data_blk: %d\n", rBlock->entries[i].fileName, rBlock->entries[i].fileSize, rBlock->entries[i].dataStartIndex);
+			printf("file: %s, size: %d, data_blk: %d\n", rBlock->entries[i].fileName, rBlock->entries[i].fileSize, rBlock->entries[i].dataStartIndex);
 		}
 		else{
 			return 0;
