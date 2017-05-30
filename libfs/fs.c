@@ -19,27 +19,29 @@ list_t blockList;
 
 //global linked list of blocks
 typedef struct {
-    char *signature;
+    char signature[8];
     uint16_t numBlocks;
     uint16_t rootIndex;
     uint16_t dataStartIndex;
     uint16_t dataBlockCount;
     uint8_t fatBlockCount;
-} superblock;
+    char padding[4079];
+} __attribute__((packed)) superblock;
 
 typedef struct {
     uint16_t entries[2048]; //TODO in the future might want to not hardcode this upper limit???
 } fat;
 
 typedef struct {
-    char *fileName;
+    char fileName[16];
     uint32_t fileSize;
     uint16_t dataStartIndex;
-} rootEntry;
+    char padding[10];
+} __attribute__((packed)) rootEntry;
 
 typedef struct {
-    rootEntry* entries[128];
-} rootDirectory;
+    rootEntry entries[128];
+} __attribute__((packed)) rootDirectory;
 
 superblock* init_superblock(){
 
@@ -59,10 +61,10 @@ superblock* init_superblock(){
     char* blockOffset = (char*)block;
 
 
-    void * signature = malloc(8);
-    memcpy(signature, (void *)blockOffset, 8);
+    //void * signature = malloc(8);
+    memcpy(sBlock->signature, (void *)blockOffset, 8);
 
-    sBlock->signature = (char *)signature;
+    //sBlock->signature = (char *)signature;
 //    printf("Signature: %s\n", sBlock->signature);
 
     //======================================================//
@@ -163,10 +165,10 @@ rootDirectory* init_rootDir(uint16_t rootIndex){
     for(int i=0; i<128; i++){
         rootEntry* entry = (rootEntry*)malloc(sizeof(rootEntry));
 
-        void * fileName = malloc(16);
-        memcpy(fileName, (void *)blockOffset, 16);
+        //void * fileName = malloc(16);
+        memcpy(entry->fileName, (void *)blockOffset, 16);
 
-        entry->fileName = (char *)fileName;
+        //entry->fileName = (char *)fileName;
 //        printf("Entry - File Name: %s\n", entry->fileName);
 
         //======================================================//
@@ -190,7 +192,7 @@ rootDirectory* init_rootDir(uint16_t rootIndex){
         //move data offset by 10 to account for the unused/padding area of the entry
         blockOffset += 12;
 
-        rootDir->entries[i] = entry;
+        rootDir->entries[i] = *entry;
     }
 //	printf("\n");
 	return rootDir;
@@ -198,9 +200,6 @@ rootDirectory* init_rootDir(uint16_t rootIndex){
 
 int fs_mount(const char *diskname)
 {
-    //TODO will need to initialize a new block and add to the global linked list of blocks
-    //
-
     int success = block_disk_open(diskname);
 
     if(success == -1){
@@ -218,8 +217,12 @@ int fs_mount(const char *diskname)
         return -1;
     }
 
-    if(strcmp(sBlock->signature, "ECS150FS") != 0){
+    char check[9];
+    strcpy(check, sBlock->signature);
+    check[8] = '\0';
+    if(strcmp(check, "ECS150FS") != 0){
         printf("sigantures do not match\n");
+        printf("block signature: %s\n", check);
         return -1;
     }
 
@@ -243,15 +246,13 @@ int fs_mount(const char *diskname)
         }
 
 	    list_add(blockList, (void*)fBlock, BLOCK_FAT);
-
-        //printf("fat block created\n");
     }
 
     rootDirectory* rBlock = init_rootDir(sBlock->rootIndex);
     list_add(blockList, (void*)rBlock, BLOCK_ROOT);
 
     while(list_length(blockList) < sBlock->numBlocks){
-        void * page = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+        void * page = mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
         list_add(blockList, (void*)page, BLOCK_DATA);
     }
 
@@ -260,9 +261,44 @@ int fs_mount(const char *diskname)
 
 int fs_umount(void)
 {
-    //TODO will need to free block and remove from global linked list of blocks
+    int listLen = list_length(blockList);
 
-    //all meta-information and file data must have been written out to the disk at this point
+    if(listLen == -1){
+        return -1;
+    }
+    printf("List length before unmounting: %d\n", listLen);
+    for(int i = 0; i<listLen; i++){
+        nodePtr nd = list_get(blockList, i);
+
+        int writeSuccess = block_write(i, getData(nd));
+
+        if(writeSuccess == -1){
+            printf("Writing to block %d failed!\n", i);
+            return -1;
+        }
+
+        void* data = getData(nd);
+        if(getType(nd) == BLOCK_DATA){
+            munmap(data, 4096);
+        }
+        else{
+            free(data);
+        }
+    }
+    int closeSuccess = block_disk_close();
+
+    if(closeSuccess == -1){
+        printf("No virtual disk is currently open\n");
+        return -1;
+    }
+
+    int destroySuccess = list_destroy(blockList);
+
+    if(destroySuccess == -1){
+        printf("Failed to destroy list\n");
+        return -1;
+    }
+
 	return 0;
 }
 
@@ -298,7 +334,7 @@ int rdir_count(void)
 
 	int count = 0;
 	for(int i = 0; i < 128; i++){
-		if(rBlock->entries[i]->fileSize == 0){
+		if(rBlock->entries[i].fileSize == 0){
 			count++;
 		}
 	}
@@ -309,7 +345,7 @@ int fs_info(void)
 {
     nodePtr nd = list_get(blockList, 0);
     superblock* sBlock = (superblock*)getData(nd);
-    
+
 	printf("FS Info:\n");
 	printf("total_blk_count=%d\n", sBlock->numBlocks);
 	printf("fat_blk_count=%d\n", sBlock->fatBlockCount);

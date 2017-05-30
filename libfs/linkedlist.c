@@ -37,8 +37,24 @@ list_t list_create(void)
 	return listPtr;
 }
 
+int list_length(list_t list)
+{
+	return (list == NULL ? -1 : list->size);
+}
+
 int list_destroy(list_t list)
 {
+    int listLen = list_length(list);
+    if(listLen == -1){
+        free(list);
+        return 0;
+    }
+
+    for(int i = 0; i<listLen; i++){
+        nodePtr nd = list_get(list, i);
+        free(nd);
+    }
+    free(list);
 	return 0;
 }
 
@@ -85,8 +101,3 @@ nodePtr list_get(list_t list, int index)
      }
      return NULL;
  }
-
-int list_length(list_t list)
-{
-	return (list == NULL ? -1 : list->size);
-}
