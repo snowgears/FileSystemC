@@ -15,8 +15,13 @@
 #define BLOCK_ROOT 13
 #define BLOCK_DATA 14
 
+#define STRUCT_FDOP 15
+
 //global linked list of blocks
 list_t blockList;
+
+//global linked list of files that are open with what file descriptors and offests they have
+list_t openFilesList;
 
 typedef struct {
     char signature[8];
@@ -44,10 +49,52 @@ typedef struct {
 } __attribute__((packed)) rootDirectory;
 
 typedef struct {
-    char fileName[16];
+    char* fileName;
     int fileDescriptors[32];
     int offsets[32];
 } fdOp;
+
+//get a fdOp struct from the openFilesList by the file name (if its exists)
+fdOp* getFdOp(const char* filename){
+    int listLen = list_length(openFilesList);
+
+    if(listLen == -1){
+        return NULL;
+    }
+
+    for(int i = 0; i<listLen; i++){
+        nodePtr nd = list_get(openFilesList, i);
+
+        fdOp* data = (fdOp*)getData(nd);
+        if(strcmp(data->fileName, fileName) == 0){
+            return data;
+        }
+    }
+    return NULL;
+}
+
+//get a fdOp struct from the openFilesList by the unique file descriptor integer (if its exists)
+//super inefficient???
+fdOp* getFdOpByDescriptor(int fd){
+    int listLen = list_length(openFilesList);
+
+    if(listLen == -1){
+        return NULL;
+    }
+
+    for(int i = 0; i<listLen; i++){
+        nodePtr nd = list_get(openFilesList, i);
+
+        fdOp* data = (fdOp*)getData(nd);
+
+        for(int i=0; i<32; i++){
+            if(fd->fileDescriptors[i] == fd){
+                return fd;
+            }
+        }
+    }
+    return NULL;
+}
 
 superblock* init_superblock(){
 
@@ -195,6 +242,7 @@ int fs_mount(const char *diskname)
     }
 
     blockList = list_create();
+    openFilesList = list_create();
 
 	superblock* sBlock = init_superblock();
     if(sBlock == NULL){
@@ -426,11 +474,44 @@ int fs_ls(void)
 
 int fs_open(const char *filename)
 {
+    //TODO first need to check if a file with that filename exists in the file system at all
+    //if it doesn't, return -1
+
+    fdOp* fd = getFdOp(filename);
+
+    //a fdOp with that filename does not yet exist
+    if(fd == NULL){
+        fd = (fdOp*)malloc(sizeof(fdOp));
+        fd->filename = filename;
+        fd->fileDescriptors[0] = 1; //TODO not sure what int value to use?
+        fd->offsets[0] = 1; //TODO not sure what int value to use?
+
+        list_add(openFilesList, (void*)fd, STRUCT_FDOP);
+        return 0;
+    }
+
+    //a fdOp with that filename exists
+    for(int i=0; i<32; i++){
+        if(fd->fileDescriptors[i] != 0){
+            fd->fileDescriptors[i] = i+1; //TODO not sure what int value to use?
+            fd->offsets[i] = 1; //TODO not sure what int value to use?
+            return 0;
+        }
+    }
+
 	return 0;
 }
 
 int fs_close(int fd)
 {
+    fdOp* f = getFdOpByDescriptor(fd);
+
+    if(f == NULL){
+        return -1;
+    }
+
+    //TODO not sure if we just remove the file descriptor from the fdOp* or remove the entire fdOp* from the openFilesList
+
 	return 0;
 }
 
