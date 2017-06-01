@@ -19,9 +19,10 @@
 
 //global linked list of blocks
 list_t blockList;
-
 //global linked list of files that are open with what file descriptors and offests they have
 list_t openFilesList;
+//global file descriptor count to make sure that each file descriptor is unique
+int fdCount = 0;
 
 typedef struct {
     char signature[8];
@@ -51,7 +52,7 @@ typedef struct {
 typedef struct {
     char* fileName;
     int fileDescriptors[32];
-    int offsets[32];
+    size_t offsets[32];
 } fdOp;
 
 //get a fdOp struct from the openFilesList by the file name (if its exists)
@@ -66,7 +67,7 @@ fdOp* getFdOp(const char* filename){
         nodePtr nd = list_get(openFilesList, i);
 
         fdOp* data = (fdOp*)getData(nd);
-        if(strcmp(data->fileName, fileName) == 0){
+        if(strcmp(data->fileName, filename) == 0){
             return data;
         }
     }
@@ -88,12 +89,26 @@ fdOp* getFdOpByDescriptor(int fd){
         fdOp* data = (fdOp*)getData(nd);
 
         for(int i=0; i<32; i++){
-            if(fd->fileDescriptors[i] == fd){
-                return fd;
+            if(data->fileDescriptors[i] == fd){
+                return data;
             }
         }
     }
     return NULL;
+}
+
+rootDirectory * getRootDirectory(){
+    nodePtr nd = list_get(blockList, 0);
+
+    if(nd == NULL){
+        return NULL;
+    }
+
+    superblock* sBlock = (superblock*)getData(nd);
+
+    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
+    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+    return rBlock;
 }
 
 superblock* init_superblock(){
@@ -358,11 +373,11 @@ int fat_count(void)
 
 int rdir_count(void)
 {
-    nodePtr nd = list_get(blockList, 0);
-    superblock* sBlock = (superblock*)getData(nd);
+    rootDirectory* rBlock = getRootDirectory();
 
-    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
-    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+    if(rBlock == NULL){
+        return 0; //TODO change this to -1???
+    }
 
 	int count = 0;
 	for(int i = 0; i < 128; i++){
@@ -392,6 +407,11 @@ int fs_info(void)
 
 int fs_create(const char *filename)
 {
+    rootDirectory* rBlock = getRootDirectory();
+    if(rBlock == NULL){
+        return -1;
+    }
+
     for(int i = 0; i<list_length(blockList); i++){
 
         nodePtr nd = list_get(blockList, i);
@@ -403,13 +423,6 @@ int fs_create(const char *filename)
         		if (fBlock->entries[j] == 0){
         			fBlock->entries[j] = FAT_EOC;
 
-                    //also update root directory
-                    nodePtr nd = list_get(blockList, 0);
-                    superblock* sBlock = (superblock*)getData(nd);
-
-                    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
-                    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
-
                     for(int k=0; k<128; k++){
                         //the first character of the filename of entry is '0'
                         if(rBlock->entries[k].fileName[0] == '\0'){
@@ -417,6 +430,14 @@ int fs_create(const char *filename)
                             memcpy(rBlock->entries[k].fileName, (void *)filename , 16);
                             rBlock->entries[k].fileSize = 0;
                             rBlock->entries[k].dataStartIndex = j;
+
+                            //create a new file descriptor struct and do not populate with values yet
+                            fdOp* fd = (fdOp*)malloc(sizeof(fdOp));
+                            strcpy(fd->fileName, filename);
+                            //fd->fileName = filename;
+                            list_add(openFilesList, (void*)fd, STRUCT_FDOP);
+
+
                             return 0;
                         }
                     }
@@ -430,11 +451,10 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
-    nodePtr nd = list_get(blockList, 0);
-    superblock* sBlock = (superblock*)getData(nd);
-
-    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
-    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+    rootDirectory* rBlock = getRootDirectory();
+    if(rBlock == NULL){
+        return -1;
+    }
 
 	for(int i = 0; i < 128; i++){
 		if(strcmp(rBlock->entries[i].fileName, filename) == 0){
@@ -446,6 +466,12 @@ int fs_delete(const char *filename)
             rBlock->entries[i].fileName[0] = '\0';
             rBlock->entries[i].fileSize = 0;
             rBlock->entries[i].dataStartIndex = 0;
+
+            //delete the associated fdOp (which should always exist at this point)
+            //TODO we should remove completely from the openFilesList and free but for now setting name to null should be sufficient?
+            fdOp* fd = getFdOp(filename);
+            fd->fileName = NULL;
+
             return 0;
 		}
 	}
@@ -454,11 +480,10 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
-	nodePtr nd = list_get(blockList, 0);
-	superblock* sBlock = (superblock*)getData(nd);
-
-	nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
-	rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+    rootDirectory* rBlock = getRootDirectory();
+    if(rBlock == NULL){
+        return -1;
+    }
 
 	printf("FS Ls:\n");
 	for(int i = 0; i < 128; i++){
@@ -479,21 +504,15 @@ int fs_open(const char *filename)
 
     fdOp* fd = getFdOp(filename);
 
-    //a fdOp with that filename does not yet exist
+    //a fdOp with that filename does not exist in the system
     if(fd == NULL){
-        fd = (fdOp*)malloc(sizeof(fdOp));
-        fd->filename = filename;
-        fd->fileDescriptors[0] = 1; //TODO not sure what int value to use?
-        fd->offsets[0] = 1; //TODO not sure what int value to use?
-
-        list_add(openFilesList, (void*)fd, STRUCT_FDOP);
-        return 0;
+        return -1;
     }
 
     //a fdOp with that filename exists
     for(int i=0; i<32; i++){
         if(fd->fileDescriptors[i] != 0){
-            fd->fileDescriptors[i] = i+1; //TODO not sure what int value to use?
+            fd->fileDescriptors[i] = ++fdCount;
             fd->offsets[i] = 1; //TODO not sure what int value to use?
             return 0;
         }
@@ -511,18 +530,57 @@ int fs_close(int fd)
     }
 
     //TODO not sure if we just remove the file descriptor from the fdOp* or remove the entire fdOp* from the openFilesList
+    //for now I will assume we only close that specific fd integer
+
+    for(int i=0; i<32; i++){
+        if(f->fileDescriptors[i] == fd){
+            f->fileDescriptors[i] = 0;
+            f->offsets[i] = 0;
+            return 0;
+        }
+    }
 
 	return 0;
 }
 
 int fs_stat(int fd)
 {
-	return 0;
+    fdOp* f = getFdOpByDescriptor(fd);
+
+    if(f == NULL){
+        return -1; //TODO this might need to be 0???
+    }
+
+    rootDirectory* rBlock = getRootDirectory();
+    if(rBlock == NULL){
+        return -1; //TODO this might need to be 0???
+    }
+
+	for(int i = 0; i < 128; i++){
+		if(strcmp(rBlock->entries[i].fileName, f->fileName) == 0){ //TODO this may not work due to the absence of the '\0' character
+            return rBlock->entries[i].fileSize;
+		}
+	}
+
+	return -1; //TODO this might need to be 0???
 }
 
 int fs_lseek(int fd, size_t offset)
 {
-	return 0;
+    fdOp* f = getFdOpByDescriptor(fd);
+
+    if(f == NULL){
+        return -1;
+    }
+
+    for(int i=0; i<32; i++){
+        if(f->fileDescriptors[i] == fd){
+            f->offsets[i] = offset;
+            return 0;
+        }
+    }
+
+	return -1;
 }
 
 int fs_write(int fd, void *buf, size_t count)
