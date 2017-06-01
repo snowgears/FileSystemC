@@ -101,3 +101,13 @@ nodePtr list_get(list_t list, int index)
      }
      return NULL;
  }
+
+//TODO once we move this all to the fs.c file, change void* to fdOp*
+int list_remove(list_t, void* data){
+    if (list == NULL || index < 0) {
+            return -1;
+    }
+
+    //TODO write remove method. Make sure it actually works this time
+    //this method will be exclusively used to remove file descriptors from the openFilesList
+}
