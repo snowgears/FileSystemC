@@ -20,7 +20,7 @@
 //global linked list of blocks
 list_t blockList;
 //global linked list of files that are open with what file descriptors and offests they have
-list_t openFilesList;
+//list_t openFilesList;
 //global file descriptor count to make sure that each file descriptor is unique
 int fdCount = 0;
 
@@ -50,51 +50,32 @@ typedef struct {
 } __attribute__((packed)) rootDirectory;
 
 typedef struct {
-    char* fileName;
-    int fileDescriptors[32];
-    size_t offsets[32];
+    char fileName[16];
+    size_t offset;
 } fdOp;
+
+fdOp *fileDes[32];
 
 //get a fdOp struct from the openFilesList by the file name (if its exists)
 fdOp* getFdOp(const char* filename){
-    int listLen = list_length(openFilesList);
-
-    if(listLen == -1){
+    if(fileDes == NULL){
         return NULL;
     }
 
-    for(int i = 0; i<listLen; i++){
-        nodePtr nd = list_get(openFilesList, i);
-
-        fdOp* data = (fdOp*)getData(nd);
-        if(strcmp(data->fileName, filename) == 0){
-            return data;
+    for(int i = 0; i < 32; i++){
+    	if(strcmp(fileDes[i]->fileName, filename) == 0){
+            return fileDes[i];
         }
     }
     return NULL;
 }
 
 //get a fdOp struct from the openFilesList by the unique file descriptor integer (if its exists)
-//super inefficient???
 fdOp* getFdOpByDescriptor(int fd){
-    int listLen = list_length(openFilesList);
-
-    if(listLen == -1){
+    if(fileDes == NULL){
         return NULL;
     }
-
-    for(int i = 0; i<listLen; i++){
-        nodePtr nd = list_get(openFilesList, i);
-
-        fdOp* data = (fdOp*)getData(nd);
-
-        for(int i=0; i<32; i++){
-            if(data->fileDescriptors[i] == fd){
-                return data;
-            }
-        }
-    }
-    return NULL;
+	return fileDes[fd];
 }
 
 rootDirectory * getRootDirectory(){
@@ -257,7 +238,11 @@ int fs_mount(const char *diskname)
     }
 
     blockList = list_create();
-    openFilesList = list_create();
+	for(int i = 0; i < 32; i++){
+		fileDes[i] = (fdOp*)malloc(sizeof(fdOp));
+		fileDes[i]->fileName[0] = '\0';
+		fileDes[i]->offset = 0;
+	}	
 
 	superblock* sBlock = init_superblock();
     if(sBlock == NULL){
@@ -338,6 +323,10 @@ int fs_umount(void)
         printf("No virtual disk is currently open\n");
         return -1;
     }
+
+	for(int i = 0; i < 32; i++){
+		free(fileDes[i]);
+	}
 
     int destroySuccess = list_destroy(blockList);
 
@@ -431,12 +420,7 @@ int fs_create(const char *filename)
                             rBlock->entries[k].fileSize = 0;
                             rBlock->entries[k].dataStartIndex = j;
 
-                            //create a new file descriptor struct and do not populate with values yet
-                            fdOp* fd = (fdOp*)malloc(sizeof(fdOp));
-                            strcpy(fd->fileName, filename);
-                            //fd->fileName = filename;
-                            list_add(openFilesList, (void*)fd, STRUCT_FDOP);
-
+                            
 
                             return 0;
                         }
@@ -469,8 +453,12 @@ int fs_delete(const char *filename)
 
             //delete the associated fdOp (which should always exist at this point)
             //TODO we should remove completely from the openFilesList and free but for now setting name to null should be sufficient?
-            fdOp* fd = getFdOp(filename);
-            fd->fileName = NULL;
+            for(int i = 0; i < 32; i++){
+			if(strcmp(fileDes[i]->fileName, filename) == 0){
+				fileDes[i]->fileName[0] = '\0';
+				fileDes[i]->offset = 0;
+			}
+		}
 
             return 0;
 		}
@@ -501,55 +489,41 @@ int fs_open(const char *filename)
 {
     //TODO first need to check if a file with that filename exists in the file system at all
     //if it doesn't, return -1
-
-    fdOp* fd = getFdOp(filename);
-
-    //a fdOp with that filename does not exist in the system
-    if(fd == NULL){
+	rootDirectory* rBlock = getRootDirectory();
+    if(rBlock == NULL){
         return -1;
     }
-
-    //a fdOp with that filename exists
-    for(int i=0; i<32; i++){
-        if(fd->fileDescriptors[i] != 0){
-            fd->fileDescriptors[i] = ++fdCount;
-            fd->offsets[i] = 1; //TODO not sure what int value to use?
-            return 0;
-        }
-    }
-
-	return 0;
+    
+	for(int i = 0; i < 128; i++){
+		if( strcmp(rBlock->entries[i].fileName, filename) == 0){
+			for(int j = 0; j < 32; j++){
+				if(fileDes[j]->fileName[0] == '\0'){
+					strcpy(fileDes[j]->fileName, filename);
+					return j;
+				}
+			}
+			return -1;
+		}
+	}
+	return -1;	
 }
 
 int fs_close(int fd)
 {
-    fdOp* f = getFdOpByDescriptor(fd);
-
-    if(f == NULL){
-        return -1;
-    }
-
-    //TODO not sure if we just remove the file descriptor from the fdOp* or remove the entire fdOp* from the openFilesList
-    //for now I will assume we only close that specific fd integer
-
-    for(int i=0; i<32; i++){
-        if(f->fileDescriptors[i] == fd){
-            f->fileDescriptors[i] = 0;
-            f->offsets[i] = 0;
-            return 0;
-        }
-    }
-
+	if(fileDes[fd]->fileName[0] == '\0'){
+		return -1;
+	}
+	fileDes[fd]->fileName[0] = '\0';
+	fileDes[fd]->offset = 0;
 	return 0;
 }
 
 int fs_stat(int fd)
 {
-    fdOp* f = getFdOpByDescriptor(fd);
-
-    if(f == NULL){
-        return -1; //TODO this might need to be 0???
-    }
+    	if(fileDes[fd]->fileName[0] == '\0'){
+		return -1;
+	}
+	char* name = fileDes[fd]->fileName;
 
     rootDirectory* rBlock = getRootDirectory();
     if(rBlock == NULL){
@@ -557,7 +531,7 @@ int fs_stat(int fd)
     }
 
 	for(int i = 0; i < 128; i++){
-		if(strcmp(rBlock->entries[i].fileName, f->fileName) == 0){ //TODO this may not work due to the absence of the '\0' character
+		if(strcmp(rBlock->entries[i].fileName, name) == 0){ //TODO this may not work due to the absence of the '\0' character
             return rBlock->entries[i].fileSize;
 		}
 	}
@@ -567,20 +541,18 @@ int fs_stat(int fd)
 
 int fs_lseek(int fd, size_t offset)
 {
-    fdOp* f = getFdOpByDescriptor(fd);
+	if(fileDes[fd]->fileName[0] == '\0'){
+		return -1;
+	}
 
-    if(f == NULL){
-        return -1;
-    }
+	int size = fs_stat(fd);
+	if(offset > size){
+		return -1;
+	}
 
-    for(int i=0; i<32; i++){
-        if(f->fileDescriptors[i] == fd){
-            f->offsets[i] = offset;
-            return 0;
-        }
-    }
+	fileDes[fd]->offset = offset;
+	return 0;
 
-	return -1;
 }
 
 int fs_write(int fd, void *buf, size_t count)
