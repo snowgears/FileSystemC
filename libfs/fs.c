@@ -54,6 +54,8 @@ typedef struct {
     size_t offset;
 } fdOp;
 
+int *changedBlocks;
+
 fdOp *fileDes[32];
 
 //get a fdOp struct from the openFilesList by the file name (if its exists)
@@ -149,6 +151,8 @@ superblock* init_superblock(){
     memcpy(fatBlockCount, (void *)blockOffset , 1);
 
     sBlock->fatBlockCount = *((uint16_t*)fatBlockCount);
+
+	changedBlocks = (int *)calloc(sBlock->numBlocks, sizeof(int));
 
     return sBlock;
 }
@@ -300,15 +304,16 @@ int fs_umount(void)
     }
 
     for(int i = 0; i<listLen; i++){
-        nodePtr nd = list_get(blockList, i);
+ 	nodePtr nd = list_get(blockList, i);
+        if(changedBlocks[i] == 1){
 
-        int writeSuccess = block_write(i, getData(nd));
+	        int writeSuccess = block_write(i, getData(nd));
 
-        if(writeSuccess == -1){
-            printf("Writing to block %d failed!\n", i);
-            return -1;
-        }
-
+       		 if(writeSuccess == -1){
+       		     printf("Writing to block %d failed!\n", i);
+        	 	return -1;
+        	}
+	}
         void* data = getData(nd);
         if(getType(nd) == BLOCK_DATA){
             munmap(data, 4096);
@@ -327,6 +332,8 @@ int fs_umount(void)
 	for(int i = 0; i < 32; i++){
 		free(fileDes[i]);
 	}
+
+	free(changedBlocks);
 
     int destroySuccess = list_destroy(blockList);
 
@@ -365,13 +372,15 @@ int rdir_count(void)
     rootDirectory* rBlock = getRootDirectory();
 
     if(rBlock == NULL){
-        return 0; //TODO change this to -1???
+        return -1; //TODO change this to -1???
     }
 
 	int count = 0;
 	for(int i = 0; i < 128; i++){
 		if(rBlock->entries[i].fileSize == 0){
-			count++;
+			if(rBlock->entries[i].fileName[0] == '\0'){
+				count++;
+			}
 		}
 	}
 	return count;
@@ -396,10 +405,20 @@ int fs_info(void)
 
 int fs_create(const char *filename)
 {
-    rootDirectory* rBlock = getRootDirectory();
-    if(rBlock == NULL){
+    
+	nodePtr nd = list_get(blockList, 0);
+
+    if(nd == NULL){
         return -1;
     }
+
+    superblock* sBlock = (superblock*)getData(nd);
+
+    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
+    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+
+
+
 
     for(int i = 0; i<list_length(blockList); i++){
 
@@ -420,7 +439,8 @@ int fs_create(const char *filename)
                             rBlock->entries[k].fileSize = 0;
                             rBlock->entries[k].dataStartIndex = j;
 
-                            
+                            changedBlocks[i] = 1;
+				changedBlocks[sBlock->rootIndex] = 1;
 
                             return 0;
                         }
@@ -435,10 +455,18 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
-    rootDirectory* rBlock = getRootDirectory();
-    if(rBlock == NULL){
+	nodePtr nd = list_get(blockList, 0);
+
+    if(nd == NULL){
         return -1;
     }
+
+    superblock* sBlock = (superblock*)getData(nd);
+
+    nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
+    rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
+    
+
 
 	for(int i = 0; i < 128; i++){
 		if(strcmp(rBlock->entries[i].fileName, filename) == 0){
@@ -459,6 +487,8 @@ int fs_delete(const char *filename)
 				fileDes[i]->offset = 0;
 			}
 		}
+		changedBlocks[i] = 1;
+		changedBlocks[sBlock->rootIndex] = 1;
 
             return 0;
 		}
