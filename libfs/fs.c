@@ -74,7 +74,7 @@ fdOp* getFdOp(const char* filename){
 
 //get a fdOp struct from the openFilesList by the unique file descriptor integer (if its exists)
 fdOp* getFdOpByDescriptor(int fd){
-    if(fileDes == NULL){
+    if(fileDes == NULL || fd < 0 || fd > 31){
         return NULL;
     }
 	return fileDes[fd];
@@ -466,14 +466,19 @@ int fs_delete(const char *filename)
     nodePtr rootNd = list_get(blockList, sBlock->rootIndex);
     rootDirectory* rBlock = (rootDirectory*)getData(rootNd);
     
+    for(int i = 0; i<list_length(blockList); i++){
 
+        nodePtr nd = list_get(blockList, i);
+        //if the block is FAT, count the number of entries within it
+        if(getType(nd) == BLOCK_FAT){
+            fat* fBlock = (fat*) getData(nd);
+	
 
+	
 	for(int i = 0; i < 128; i++){
 		if(strcmp(rBlock->entries[i].fileName, filename) == 0){
-            nodePtr fatNd = list_get(blockList, 1); //TODO in the future we will have to account for more than 1 fat block
-
-            fat* fBlock = (fat*) getData(fatNd);
-            fBlock->entries[rBlock->entries[i].dataStartIndex] = 0;
+        int fatNum = rBlock->entries[i].dataStartIndex % 2048;    
+	fBlock->entries[fatNum] = 0;
 
             rBlock->entries[i].fileName[0] = '\0';
             rBlock->entries[i].fileSize = 0;
@@ -493,6 +498,8 @@ int fs_delete(const char *filename)
             return 0;
 		}
 	}
+	}
+}
 	return -1;
 }
 
@@ -585,12 +592,98 @@ int fs_lseek(int fd, size_t offset)
 
 }
 
+int calcStartBlock(char *filename, int offset){
+	int blockNum = offset / 4096;
+	rootDirectory *rBlock = getRootDirectory();
+	for(int i = 0; i < 128; i++){
+		if (strcmp(rBlock->entries[i].fileName, filename) == 0){
+			if(offset > rBlock->entries[i].fileSize){
+				return -1;
+			}
+			int currBlock = rBlock->entries[i].dataStartIndex;
+			for(int j = 1; j < blockNum; j++){
+				nodePtr nd = list_get(blockList, (currBlock / 2048) + 1);
+				fat *fBlock = (fat *)getData(nd);
+				currBlock = fBlock->entries[currBlock % 2048];
+			}
+		return currBlock;
+		}
+		return -1;
+	}
+	return -1;
+}
+
 int fs_write(int fd, void *buf, size_t count)
 {
 	return 0;
 }
 
+uint32_t getFileSize(char *filename){
+	rootDirectory *rBlock  = getRootDirectory();
+	for(int i = 0; i < 128; i++){
+		if(strcmp(rBlock->entries[i].fileName, filename) == 0){
+			return rBlock->entries[i].fileSize;
+		}
+		return -1;
+	}
+	return -1;
+}
+
 int fs_read(int fd, void *buf, size_t count)
 {
-	return 0;
+	nodePtr nd = list_get(blockList, 0);
+	superblock *sBlock = (superblock *)getData(nd);
+	//rootDirectory *rBlock = getRootDirectory();
+	fdOp *f = getFdOpByDescriptor(fd);
+	size_t currAmtCopied = 0;
+	char hold[4096];
+
+	if (f == NULL || getFileSize(f->fileName) < (count + f->offset)){
+//		printf("1\n");
+		return -1;
+	}
+	int currBlock = calcStartBlock(f->fileName, f->offset);
+
+	if((f->offset % 4096) != 0){
+//		printf("2\n");
+		nd = list_get(blockList, sBlock->dataStartIndex + currBlock);
+		//void *page = getData(nd);
+		currAmtCopied = (4096 - (f->offset % 4096));
+		//memcpy(buf, page, currAmtCopied);
+		block_read(currBlock, buf);
+		nd = list_get(blockList, (currBlock / 2048) + 1);
+		fat *fBlock = (fat *)getData(nd);
+		currBlock = fBlock->entries[currBlock % 2048];
+	}
+	while(currAmtCopied < count){
+		if(count - currAmtCopied >= 4096){
+//			printf("3\n");
+			nd = list_get(blockList, sBlock->dataStartIndex + currBlock);
+			void *page = getData(nd);
+			memcpy((char *)buf + currAmtCopied, page, 4096);
+			currAmtCopied += 4096;
+
+			nd = list_get(blockList, (currBlock / 2048) + 1);
+			fat *fBlock = (fat *)getData(nd);
+			currBlock = fBlock->entries[currBlock % 2048];
+		}
+		else {
+//			printf("4\n");
+			nd = list_get(blockList, sBlock->dataStartIndex + currBlock);
+			//void *page = getData(nd);
+//			printf("dataStartIndex; %d\n", sBlock->dataStartIndex);
+//			printf("currBlock: %d\n", currBlock);
+//			printf("count: %lu\n", count);
+//			printf("currAmtCopied: %lu\n", currAmtCopied);	
+//			printf("page: %s\n", (char *)page);
+			block_read(sBlock->dataStartIndex + currBlock, hold);
+
+			memcpy((char *)buf + currAmtCopied, hold, (count - currAmtCopied));
+					
+			//printf("hold:\n%s", hold);
+			currAmtCopied += count - currAmtCopied;
+		}
+	}
+//	printf("5\n");
+	return currAmtCopied;
 }
