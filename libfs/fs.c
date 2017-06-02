@@ -24,6 +24,8 @@ list_t blockList;
 //global file descriptor count to make sure that each file descriptor is unique
 int fdCount = 0;
 
+int debug = 1;
+
 typedef struct {
     char signature[8];
     uint16_t numBlocks;
@@ -175,12 +177,13 @@ fat* init_fat(int index){
         uint16_t* entry = (uint16_t*)malloc(2);
 
         memcpy(entry, (void *)blockOffset, 2);
-
-	if(*entry == 0xFFFF){
-		printf("FAT[%d] = 0xFFFF\n", i);
-	}
-	else if(*entry != 0){
-		printf("FAT[%d] = %d\n", i, *entry);
+	if(debug == 1){
+		if(*entry == 0xFFFF){
+			printf("FAT[%d] = 0xFFFF\n", i);
+		}
+		else if(*entry != 0){
+			printf("FAT[%d] = %d\n", i, *entry);
+		}
 	}
         fBlock->entries[i] = *entry;
 
@@ -233,7 +236,7 @@ rootDirectory* init_rootDir(uint16_t rootIndex){
         //move data offset by 10 to account for the unused/padding area of the entry
         blockOffset += 12;
 
-	if(entry->fileName[0] != '\0'){
+	if(entry->fileName[0] != '\0' && debug == 1){
 		printf("Root[%d] : %s, %d\n", i, entry->fileName, entry->fileSize);
 	}
         rootDir->entries[i] = *entry;
@@ -283,9 +286,11 @@ int fs_mount(const char *diskname)
 
 	fat* fBlock = malloc(sBlock->fatBlockCount * sizeof(fat));
     while(sBlock->rootIndex - currentIndex >= 1){
-        printf("FAT #%d\n", currentIndex);
+        if(debug == 1){
+		printf("\nFAT #%d\n", currentIndex);
+	}
 	fBlock = init_fat(currentIndex++);
-	printf("\n");
+	
 
         if(fBlock == NULL){
             printf("read fat failed\n");
@@ -317,7 +322,9 @@ int fs_umount(void)
     for(int i = 0; i<listLen; i++){
  	nodePtr nd = list_get(blockList, i);
         if(changedBlocks[i] == 1){
-		printf("Writing to blcok[%d]\n", i);
+		if(debug == 1){
+			printf("Writing to blcok[%d]\n", i);
+		}
 	        int writeSuccess = block_write(i, getData(nd));
 
        		 if(writeSuccess == -1){
@@ -436,7 +443,9 @@ int fs_create(const char *filename)
         nodePtr nd = list_get(blockList, i);
         //if the block is FAT, count the number of entries within it
         if(getType(nd) == BLOCK_FAT){
-		printf("block[%d] is FAT\n", i);
+		if(debug == 1){
+			printf("block[%d] is FAT\n", i);
+		}
             fat* fBlock = (fat*) getData(nd);
 
         	for(int j = 0; j < 2048; j++){
@@ -450,11 +459,13 @@ int fs_create(const char *filename)
                             memcpy(rBlock->entries[k].fileName, (void *)filename , 16);
                             rBlock->entries[k].fileSize = 0;
                             rBlock->entries[k].dataStartIndex = j;
-				printf("changed[%d]\n", i);
+				
                             changedBlocks[i] = 1;
-				printf("changed[%d]\n", sBlock->rootIndex);
 				changedBlocks[sBlock->rootIndex] = 1;
-
+				if(debug ==1){
+					printf("changed[%d]\n", i);
+					printf("changed[%d]\n", sBlock->rootIndex);
+				}
                             return 0;
                         }
                     }
@@ -490,10 +501,28 @@ int fs_delete(const char *filename)
 	
 	for(int i = 0; i < 128; i++){
 		if(strcmp(rBlock->entries[i].fileName, filename) == 0){
-			printf("Found %s\n", filename);
 			int fatNum = rBlock->entries[i].dataStartIndex % 2048;   
-			fBlock->entries[fatNum] = 0;
-			printf("FAT[%d] = %d\n", fatNum, fBlock->entries[fatNum]);
+//			do{
+				int nextBlock = fBlock->entries[fatNum];
+				fBlock->entries[fatNum] = 0;
+//				fatNum = fBlock->entries[i];	
+//				nd = list_get(blockList, (fatNum / 2048) + 1);
+//				fBlock = (fat *)getData(nd);
+			if(debug == 1){
+				printf("Found %s\n", filename);
+				printf("FAT[%d] = %d\n", fatNum, fBlock->entries[fatNum]);
+			}
+//			}while(fBlock->entries[fatNum] != 0xFFFF);
+			while(nextBlock != 0xFFFF){
+				
+				nd = list_get(blockList, (nextBlock / 2048) + 1);
+				fBlock = getData(nd);
+				fBlock->entries[nextBlock] = 0;
+				nextBlock = fBlock->entries[nextBlock];
+				if(debug == 1){
+					printf("Found %s\n", filename);
+					printf("FAT[%d] = %d\n", nextBlock, fBlock->entries[nextBlock]);
+				}		}
 			rBlock->entries[i].fileName[0] = '\0';
 			rBlock->entries[i].fileSize = 0;
 			rBlock->entries[i].dataStartIndex = 0;
@@ -506,11 +535,12 @@ int fs_delete(const char *filename)
 					fileDes[i]->offset = 0;
 				}
 			}
-		printf("changed[%d]\n", j);
 		changedBlocks[j] = 1;
-		printf("changed[%d]\n", sBlock->rootIndex);
 		changedBlocks[sBlock->rootIndex] = 1;
-
+		if(debug == 1){
+			printf("changed[%d]\n", j);
+			printf("changed[%d]\n", sBlock->rootIndex);
+		}
             return 0;
 		}
 	}
@@ -530,9 +560,6 @@ int fs_ls(void)
 	for(int i = 0; i < 128; i++){
 		if (rBlock->entries[i].fileName[0] != '\0'){
 			printf("file: %s, size: %d, data_blk: %d\n", rBlock->entries[i].fileName, rBlock->entries[i].fileSize, rBlock->entries[i].dataStartIndex);
-		}
-		else{
-			return 0;
 		}
 	}
 	return 0;
@@ -630,9 +657,23 @@ int calcStartBlock(char *filename, int offset){
 	return -1;
 }
 
-int fs_write(int fd, void *buf, size_t count)
-{
-	return 0;
+int findEmptyBlock(){
+	
+	for(int i = 1; i < 5; i++){
+		nodePtr nd = list_get(blockList, i);
+		if(getType(nd) == BLOCK_FAT){
+			fat *fBlock = (fat *)getData(nd);
+			for(int j = 0; j < 2048; j++){
+				if(fBlock->entries[j] == 0){
+					if(debug == 1){
+						printf("FAT[%d]: empty\n", j);
+					}
+					return (2048 * (i - 1)) + j;
+				}
+			}
+		}
+	}
+	return -1;
 }
 
 uint32_t getFileSize(char *filename){
@@ -646,11 +687,128 @@ uint32_t getFileSize(char *filename){
 	return -1;
 }
 
+int fs_write(int fd, void *buf, size_t count)
+{
+	nodePtr nd = list_get(blockList, 0);
+	rootDirectory *rBlock = getRootDirectory();
+	superblock *sBlock = (superblock *)getData(nd);
+	fdOp *f = getFdOpByDescriptor(fd);
+	size_t currAmtCopied = 0;
+	char hold[4096];
+
+	if (f == NULL){
+		printf(" Write error");
+		return -1;
+	}
+	int currBlock = calcStartBlock(f->fileName, f->offset);
+	nd = list_get(blockList, (currBlock / 2048) + 1);
+	fat *fBlock = (fat *)getData(nd);
+	if(debug == 1){
+		printf("Block: %d\n", currBlock);
+	}
+	if((f->offset % 4096) != 0){
+		if(debug == 1){
+			printf("Start: FAT[%d]\n", currBlock);
+		}
+		int offCount = f->offset % 4096;
+		block_read(sBlock->dataStartIndex + currBlock, hold);
+		if(count - offCount >= 4096){
+			memcpy(hold + offCount, buf, 4096 - offCount);
+			currAmtCopied = 4096 - offCount;
+		}
+		else {
+			memcpy(hold + offCount, buf, count - offCount);
+			currAmtCopied = count - offCount;
+		}
+		block_write(sBlock->dataStartIndex + currBlock, hold);
+		if(fBlock->entries[currBlock % 2048] != 0xFFFF){	
+			nd = list_get(blockList, (currBlock / 2048) + 1);
+			fBlock = (fat *)getData(nd);
+			currBlock = fBlock->entries[currBlock % 2048];
+		}
+		else if(count - currAmtCopied > 0){
+			int newBlock = findEmptyBlock();
+			fBlock->entries[currBlock] = newBlock;
+			currBlock = newBlock;
+			nd = list_get(blockList, (currBlock / 2048) + 1);
+			fBlock = (fat *)getData(nd);
+			fBlock->entries[currBlock % 2048] = 0xFFFF;
+		}
+		if(debug == 1){
+			printf("Copied: %lu\n", currAmtCopied);
+		}
+	}
+	while(currAmtCopied < count){
+		if(count - currAmtCopied >= 4096){
+			if(debug == 1){
+				printf("Loop: FAT[%d]\n", currBlock);
+			}
+			
+//			int check = block_read(sBlock->dataStartIndex + currBlock, hold);
+//			if(check == -1){
+//				printf("fd is invalid\n");
+//				return -1;
+//			}
+			memcpy(hold, (char *)buf + currAmtCopied, 4096);
+			currAmtCopied += 4096;
+			block_write(sBlock->dataStartIndex + currBlock, hold);
+
+			if(fBlock->entries[currBlock % 2048] != 0xFFFF){
+				nd = list_get(blockList, (currBlock / 2048) + 1);
+				fBlock = (fat *)getData(nd);
+				currBlock = fBlock->entries[currBlock % 2048];
+			}
+			else if(count - currAmtCopied > 0){
+				int newBlock = findEmptyBlock();
+				fBlock->entries[currBlock] = newBlock;
+				currBlock = newBlock;
+				nd = list_get(blockList, (currBlock / 2048) + 1);
+				fBlock = (fat *)getData(nd);
+				fBlock->entries[currBlock % 2048] = 0xFFFF;	
+			}
+			if(debug == 1){
+				printf("Copied: %lu\n", currAmtCopied);
+			}
+		}
+		else {
+			if(debug ==1){
+				printf("Finish: FAT[%d]\n", currBlock);
+			}
+//			int check = block_read(sBlock->dataStartIndex + currBlock, hold);
+//			if(check == -1){
+//				printf("fd is invalid\n");
+//				return -1;
+//			}
+
+			memcpy(hold, (char *)buf + currAmtCopied, (count - currAmtCopied));
+			block_write(sBlock->dataStartIndex + currBlock, hold);
+
+			currAmtCopied += count - currAmtCopied;
+			if(debug == 1){
+				printf("Copied: %lu\n", currAmtCopied);
+			}
+		}
+	}
+//	if(getFileSize(f->fileName) <= f->offset + count){
+		for(int i = 0; i < 128; i++){
+			if(strcmp(rBlock->entries[i].fileName, f->fileName) == 0){
+				rBlock->entries[i].fileSize = (f->offset + count);
+				changedBlocks[sBlock->rootIndex] = 1;
+				if(debug == 1){
+					printf("%s size: %lu\n", f->fileName, f->offset + count);
+					printf("changed[%d]\n", sBlock->rootIndex);
+				}
+			}
+		}
+//	}
+	return currAmtCopied;
+}
+
+
 int fs_read(int fd, void *buf, size_t count)
 {
 	nodePtr nd = list_get(blockList, 0);
 	superblock *sBlock = (superblock *)getData(nd);
-	//rootDirectory *rBlock = getRootDirectory();
 	fdOp *f = getFdOpByDescriptor(fd);
 	size_t currAmtCopied = 0;
 	char hold[4096];
@@ -660,24 +818,28 @@ int fs_read(int fd, void *buf, size_t count)
 		return -1;
 	}
 	int currBlock = calcStartBlock(f->fileName, f->offset);
-	printf("Block: %d\n", currBlock);
+	if(debug == 1){
+		printf("Block: %d\n", currBlock);
+	}
 	if((f->offset % 4096) != 0){
-		printf("Start: FAT[%d]\n", currBlock);
-//		nd = list_get(blockList, sBlock->dataStartIndex + currBlock);
-		//void *page = getData(nd);
+		if(debug == 1){
+			printf("Start: FAT[%d]\n", currBlock);
+		}
 		currAmtCopied = f->offset % 4096;
 		block_read(sBlock->dataStartIndex + currBlock, hold);
 		memcpy((char *)buf, hold , currAmtCopied);
 		nd = list_get(blockList, (currBlock / 2048) + 1);
 		fat *fBlock = (fat *)getData(nd);
 		currBlock = fBlock->entries[currBlock % 2048];
-		printf("Copied: %lu\n", currAmtCopied);
+		if(debug == 1){
+			printf("Copied: %lu\n", currAmtCopied);
+		}
 	}
 	while(currAmtCopied < count){
 		if(count - currAmtCopied >= 4096){
-			printf("Loop: FAT[%d]\n", currBlock);
-//			nd = list_get(blockList, sBlock->dataStartIndex + currBlock);
-//			void *page = getData(nd);
+			if(debug == 1){
+				printf("Loop: FAT[%d]\n", currBlock);
+			}
 			
 			int check = block_read(sBlock->dataStartIndex + currBlock, hold);
 			if(check == -1){
@@ -690,17 +852,14 @@ int fs_read(int fd, void *buf, size_t count)
 			nd = list_get(blockList, (currBlock / 2048) + 1);
 			fat *fBlock = (fat *)getData(nd);
 			currBlock = fBlock->entries[currBlock % 2048];
-			printf("Copied: %lu\n", currAmtCopied);
+			if(debug == 1){
+				printf("Copied: %lu\n", currAmtCopied);
+			}
 		}
 		else {
-			printf("Finish: FAT[%d]\n", currBlock);
-//			nd = list_get(blockList, sBlock->dataStartIndex + currBlock);
-			//void *page = getData(nd);
-//			printf("dataStartIndex; %d\n", sBlock->dataStartIndex);
-//			printf("currBlock: %d\n", currBlock);
-//			printf("count: %lu\n", count);
-//			printf("currAmtCopied: %lu\n", currAmtCopied);	
-//			printf("page: %s\n", (char *)page);
+			if(debug ==1){
+				printf("Finish: FAT[%d]\n", currBlock);
+			}
 			int check = block_read(sBlock->dataStartIndex + currBlock, hold);
 			if(check == -1){
 				printf("fd is invalid\n");
@@ -709,11 +868,11 @@ int fs_read(int fd, void *buf, size_t count)
 
 			memcpy((char *)buf + currAmtCopied, hold, (count - currAmtCopied));
 					
-			//printf("hold:\n%s", hold);
 			currAmtCopied += count - currAmtCopied;
-			printf("Copied: %lu\n", currAmtCopied);
+			if(debug == 1){
+				printf("Copied: %lu\n", currAmtCopied);
+			}
 		}
 	}
-//	printf("5\n");
 	return currAmtCopied;
 }
