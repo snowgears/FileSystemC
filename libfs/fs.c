@@ -24,7 +24,7 @@ list_t blockList;
 //global file descriptor count to make sure that each file descriptor is unique
 int fdCount = 0;
 
-int debug = 1;
+int debug = 0;
 
 typedef struct {
     char signature[8];
@@ -517,8 +517,9 @@ int fs_delete(const char *filename)
 				
 				nd = list_get(blockList, (nextBlock / 2048) + 1);
 				fBlock = getData(nd);
-				fBlock->entries[nextBlock] = 0;
+				fatNum = nextBlock;
 				nextBlock = fBlock->entries[nextBlock];
+				fBlock->entries[fatNum] = 0;
 				if(debug == 1){
 					printf("Found %s\n", filename);
 					printf("FAT[%d] = %d\n", nextBlock, fBlock->entries[nextBlock]);
@@ -707,20 +708,32 @@ int fs_write(int fd, void *buf, size_t count)
 		printf("Block: %d\n", currBlock);
 	}
 	if((f->offset % 4096) != 0){
+		printf("offset = %lu\n", f->offset);
+		printf("count = %lu\n", count);
 		if(debug == 1){
 			printf("Start: FAT[%d]\n", currBlock);
 		}
 		int offCount = f->offset % 4096;
+		printf("offCount = %i\n", offCount);
+//		char * bounce = malloc(4096 * sizeof(char));
 		block_read(sBlock->dataStartIndex + currBlock, hold);
+		printf("HOLD:\n%s\n", hold);
 		if(count - offCount >= 4096){
+			printf("1\n");
 			memcpy(hold + offCount, buf, 4096 - offCount);
 			currAmtCopied = 4096 - offCount;
 		}
 		else {
-			memcpy(hold + offCount, buf, count - offCount);
-			currAmtCopied = count - offCount;
+			printf("2\n");
+//			memcpy(bounce + offCount, buf, count);
+/			for(int i = 0 ; i < count; i++){
+				hold[offCount + i] = ((char *)buf)[i];
+			}
+//			strncpy(bounce + offCount, buf, count);
+			currAmtCopied = count;
 		}
-		block_write(sBlock->dataStartIndex + currBlock, hold);
+		printf("HOLD:\n%s\n", hold);
+		block_write(sBlock->dataStrtIndex + currBlock, hold);
 		if(fBlock->entries[currBlock % 2048] != 0xFFFF){	
 			nd = list_get(blockList, (currBlock / 2048) + 1);
 			fBlock = (fat *)getData(nd);
@@ -737,6 +750,7 @@ int fs_write(int fd, void *buf, size_t count)
 		if(debug == 1){
 			printf("Copied: %lu\n", currAmtCopied);
 		}
+//		free(bounce);
 	}
 	while(currAmtCopied < count){
 		if(count - currAmtCopied >= 4096){
