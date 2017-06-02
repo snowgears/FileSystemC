@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <limits.h>
 #include <sys/mman.h>
 #include "disk.h"
 #include "fs.h"
@@ -715,7 +716,7 @@ int fs_write(int fd, void *buf, size_t count)
 		}
 		int offCount = f->offset % 4096;
 		printf("offCount = %i\n", offCount);
-//		char * bounce = malloc(4096 * sizeof(char));
+		char * bounce = malloc(4096 * sizeof(char));
 		block_read(sBlock->dataStartIndex + currBlock, hold);
 		printf("HOLD:\n%s\n", hold);
 		if(count - offCount >= 4096){
@@ -724,22 +725,28 @@ int fs_write(int fd, void *buf, size_t count)
 			currAmtCopied = 4096 - offCount;
 		}
 		else {
-			printf("2\n");
+			printf("count = %lu\n", count);
 //			memcpy(bounce + offCount, buf, count);
-/			for(int i = 0 ; i < count; i++){
-				hold[offCount + i] = ((char *)buf)[i];
+			strncpy(bounce, buf, count);
+			for(int i = 0 ; i < count; i++){
+				printf("hold[%d] = %c, bounce[%d] = %c\n", offCount + i, hold[offCount + i], i, bounce[i]);
+				hold[offCount + i] = bounce[i];
+//				memcpy(hold + offCount + i, (uint8_t *)buf + i, 1);
 			}
-//			strncpy(bounce + offCount, buf, count);
+//			strncpy(hold + offCount, buf, count);
 			currAmtCopied = count;
 		}
+//		hold[0] = 'X';
 		printf("HOLD:\n%s\n", hold);
-		block_write(sBlock->dataStrtIndex + currBlock, hold);
+		block_write(sBlock->dataStartIndex + currBlock, hold);
 		if(fBlock->entries[currBlock % 2048] != 0xFFFF){	
+			printf("next\n");
 			nd = list_get(blockList, (currBlock / 2048) + 1);
 			fBlock = (fat *)getData(nd);
 			currBlock = fBlock->entries[currBlock % 2048];
 		}
 		else if(count - currAmtCopied > 0){
+			printf("new\n");
 			int newBlock = findEmptyBlock();
 			fBlock->entries[currBlock] = newBlock;
 			currBlock = newBlock;
@@ -803,7 +810,8 @@ int fs_write(int fd, void *buf, size_t count)
 			}
 		}
 	}
-//	if(getFileSize(f->fileName) <= f->offset + count){
+	printf("filesize = %u\n", fs_stat(fd));
+	if(fs_stat(fd) <= f->offset + count){
 		for(int i = 0; i < 128; i++){
 			if(strcmp(rBlock->entries[i].fileName, f->fileName) == 0){
 				rBlock->entries[i].fileSize = (f->offset + count);
@@ -814,7 +822,21 @@ int fs_write(int fd, void *buf, size_t count)
 				}
 			}
 		}
-//	}
+	}
+	else if(fs_stat(fd) == UINT_MAX){
+		for(int i = 0; i < 128; i++){
+			if(strcmp(rBlock->entries[i].fileName, f->fileName) == 0){
+				rBlock->entries[i].fileSize = count;
+				changedBlocks[sBlock->rootIndex] = 1;
+				if(debug == 1){
+					printf("%s size: %lu\n", f->fileName, f->offset + count);
+					printf("changed[%d]\n", sBlock->rootIndex);
+				}
+			}
+		}
+
+	}
+	
 	return currAmtCopied;
 }
 
