@@ -82,7 +82,27 @@ file size, and the data block start index.
 
 ### Phase 3: File Descriptor Operations
 
-For the **fs_open()** method,
+For the **fs_open()** method, we implemented our file descriptors using a struct  
+which we called *fdOp* which contains the name of the associated file and the  
+memory offset for reading and writing. Since there was a maximum amount of file  
+descriptors that could be open at one time (32), we stored all of the fdOp  
+structs in a global statically allocated array of size 32. We then use the  
+indices of this array to represent the integer of the actual file descriptor. We  
+did this because with this implementation we are able to get our fdOp structs  
+(and by the same logic, the associated file name) in O(1) time given a file  
+descriptor.    
+
+For the **fs_close()** method, we are able to use the same logic as above only  
+instead of returning an open index in the file descriptor array, we can simply  
+clear the entry in the array at the provided index.  
+
+For the **fs_lseek()** method, we are able to use the same logic as *fs_close()*  
+only instead of removing the entire entry at the index, we set the offset  
+variable of the entry (*of type fdOp*) to the provided offset.  
+
+For the **fs_stat()** method, we loop through the entries of our root directory  
+block and once we find the one with the matching file name (which we get using  
+the same method as used in the previous 3 methods), we print the file size.   
 
 ### Phase 4: File Reading / Writing
 
