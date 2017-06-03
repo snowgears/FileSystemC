@@ -1,7 +1,6 @@
 # Target programs
 programs :=		\
-	test_fs.x \
-	test_list.x
+	test_fs.x
 
 # File-system library
 FSLIB := libfs
@@ -80,4 +79,3 @@ clean:
 	$(Q)rm -rf $(objs) $(deps) $(programs) README.html
 
 .PHONY: clean $(libfs)
-

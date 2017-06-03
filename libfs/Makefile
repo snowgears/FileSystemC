@@ -1,4 +1,4 @@
-objs := disk.o fs.o linkedlist.o
+objs := disk.o fs.o
 CC := gcc
 CFLAGS := -Wall -Werror
 
