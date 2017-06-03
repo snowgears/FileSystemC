@@ -748,14 +748,14 @@ int fs_write(int fd, void *buf, size_t count)
 	int currBlock = calcStartBlock(f->fileName, f->offset);
 	nd = list_get(blockList, (currBlock / FAT_ARRAY_SIZE) + 1);
 	fat *fBlock = (fat *)getData(nd);
-
+	// if starting in the middle of block
 	if((f->offset % BLOCK_SIZE) != 0){
 
 		int offCount = f->offset % BLOCK_SIZE;
 
 		char * bounce = malloc(BLOCK_SIZE * sizeof(char));
 		block_read(sBlock->dataStartIndex + currBlock, hold);
-
+		// if the amount to write can't fit in this block
 		if(count - offCount >= BLOCK_SIZE){
 			memcpy(hold + offCount, buf, BLOCK_SIZE - offCount);
 			currAmtCopied = BLOCK_SIZE - offCount;
@@ -769,11 +769,13 @@ int fs_write(int fd, void *buf, size_t count)
 		}
 
 		block_write(sBlock->dataStartIndex + currBlock, hold);
+		// if the current block in FAT doesn't point to FAT_EOC
 		if(fBlock->entries[currBlock % FAT_ARRAY_SIZE] != FAT_EOC){
 			nd = list_get(blockList, (currBlock / FAT_ARRAY_SIZE) + 1);
 			fBlock = (fat *)getData(nd);
 			currBlock = fBlock->entries[currBlock % FAT_ARRAY_SIZE];
 		}
+		// if there is still more to write
 		else if(count - currAmtCopied > 0){
 			int newBlock = findEmptyBlock();
 			fBlock->entries[currBlock] = newBlock;
@@ -789,7 +791,7 @@ int fs_write(int fd, void *buf, size_t count)
 			memcpy(hold, (char *)buf + currAmtCopied, BLOCK_SIZE);
 			currAmtCopied += BLOCK_SIZE;
 			block_write(sBlock->dataStartIndex + currBlock, hold);
-
+			// update currBlock for next write
 			if(fBlock->entries[currBlock % FAT_ARRAY_SIZE] != FAT_EOC){
 				nd = list_get(blockList, (currBlock / FAT_ARRAY_SIZE) + 1);
 				fBlock = (fat *)getData(nd);
@@ -845,15 +847,17 @@ int fs_read(int fd, void *buf, size_t count)
 		return -1;
 	}
 	int currBlock = calcStartBlock(f->fileName, f->offset);
-
+	// if starting in the middle of block
 	if((f->offset % BLOCK_SIZE) != 0){
 		currAmtCopied = f->offset % BLOCK_SIZE;
 		block_read(sBlock->dataStartIndex + currBlock, hold);
 		memcpy((char *)buf, hold , currAmtCopied);
+		// update currBlock for next read
 		nd = list_get(blockList, (currBlock / FAT_ARRAY_SIZE) + 1);
 		fat *fBlock = (fat *)getData(nd);
 		currBlock = fBlock->entries[currBlock % FAT_ARRAY_SIZE];
 	}
+	// while there is still more to read
 	while(currAmtCopied < count){
 		if(count - currAmtCopied >= BLOCK_SIZE){
 
@@ -861,9 +865,10 @@ int fs_read(int fd, void *buf, size_t count)
 			if(check == -1){
 				return -1;
 			}
+			// read one block at a time
 			memcpy((char *)buf + currAmtCopied, hold, BLOCK_SIZE);
 			currAmtCopied += BLOCK_SIZE;
-
+			// update currBlock for next read
 			nd = list_get(blockList, (currBlock / FAT_ARRAY_SIZE) + 1);
 			fat *fBlock = (fat *)getData(nd);
 			currBlock = fBlock->entries[currBlock % FAT_ARRAY_SIZE];
