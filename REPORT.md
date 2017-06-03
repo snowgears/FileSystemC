@@ -106,7 +106,21 @@ the same method as used in the previous 3 methods), we print the file size.
 
 ### Phase 4: File Reading / Writing
 
-For the **fs_read()** and the **fs_write()** methods, **//TODO**
+For the **fs_read()** and the **fs_write()** methods, we needed to know exactly
+which block we wanted to start at based on the offset. In order to implement this
+we created a helper function called calcStartBlock(), which used division on the
+offset in order to calculate the block that we want to start our read or write on.
+In both read and write, we considered a combination of 4 possible cases when 
+accessing blocks: accessing from the start of a block, accessing from the middle
+of a block, accessing to the middle of a block, or accessing to the end of a block.
+After reading or writing to the block, the next block is found based on the
+information in our FAT. For write, if the block contains our FAT_EOC and we still
+have more to write, another helper function called findEmptyBlock() would parse
+the FAT in order to find an new block to "append" to our file. The actual process
+of reading and writing is done with the functions block_read() and block_write()
+in combination with our buffer in order to execute the desired function. We update
+an offset counter everytime we read or write in order to append read blocks to each
+other in read, or to write subsequent parts of our buffer to the file. 
 
 ## Sources Used:
 
